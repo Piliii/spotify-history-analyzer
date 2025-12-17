@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+import json
+import os
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, date
+import statistics
+
+def select_files():
+    print("\n" + "=" * 80)
+    print("SPOTIFY LISTENING HISTORY ANALYZER")
+    print("=" * 80)
+    
+    # List JSON files in current directory
+    json_files = [f for f in os.listdir('.') if f.endswith('.json')]
+    
+    if not json_files:
+        print("\nNo JSON files found in the current directory.")
+        filename = input("\nEnter the full path to your JSON file: ").strip()
+        return [filename]
+    
+    print("\nJSON files found in current directory:")
+    for i, file in enumerate(json_files, 1):
+        try:
+            size = os.path.getsize(file) / (1024 * 1024)  # Size in MB
+            print(f"  {i}. {file} ({size:.2f} MB)")
+        except:
+            print(f"  {i}. {file}")
+    
+    print(f"  {len(json_files) + 1}. Enter custom path(s)")
+    print(f"  {len(json_files) + 2}. Select ALL files in directory")
+    
+    while True:
+        try:
+            choice = input(f"\nSelect file(s) (e.g., '1' or '1,3,5' or 'all'): ").strip().lower()
+            
+            if choice == 'all' or choice == str(len(json_files) + 2):
+                print(f"Selected all {len(json_files)} files")
+                return json_files
+            
+            if choice == str(len(json_files) + 1):
+                custom = input("Enter file path(s) separated by comma: ").strip()
+                return [f.strip() for f in custom.split(',')]
+            
+            # Parse comma-separated choices
+            selected_indices = [int(x.strip()) for x in choice.split(',')]
+            selected_files = []
+            
+            for idx in selected_indices:
+                if 1 <= idx <= len(json_files):
+                    selected_files.append(json_files[idx - 1])
+                else:
+                    print(f"Invalid choice: {idx}")
+                    continue
+            
+            if selected_files:
+                print(f"Selected {len(selected_files)} file(s): {', '.join(selected_files)}")
+                return selected_files
+            else:
+                print("No valid files selected. Try again.")
+                
+        except ValueError:
+            print("Please enter valid numbers separated by commas (e.g., '1,2,3')")
+        except KeyboardInterrupt:
+            print("\n\nCanceled by user")
+            exit(0)
+
+def load_data(filenames):
+    """Load and merge JSON data from multiple files."""
+    all_data = []
+    
+    for filename in filenames:
+        try:
+            print(f"Loading {filename}...", end=" ")
+            with open(filename, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                all_data.extend(data)
+            print(f"Loaded {len(data):,} entries")
+        except FileNotFoundError:
+            print(f"Error: File '{filename}' not found")
+        except json.JSONDecodeError:
+            print(f"Error: Invalid JSON in '{filename}'")
+        except Exception as e:
+            print(f"Error loading '{filename}': {str(e)}")
+    
+    if not all_data:
+        print("No data loaded. Exiting.")
+        exit(1)
+    
+    print(f"\nTotal entries loaded: {len(all_data):,}")
+    return all_data
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle date and datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        return super().default(obj)
+
+def analyze_spotify_data(data):
+    """Comprehensive analysis of Spotify listening history."""
+    
+    results = {}
+    
+    # Basic Statistics
+    results['total_entries'] = len(data)
+    
+    # Time-based analysis
+    timestamps = [datetime.fromisoformat(entry['ts'].replace('Z', '+00:00')) for entry in data]
+    results['date_range'] = {
+        'earliest': min(timestamps).isoformat(),
+        'latest': max(timestamps).isoformat(),
+        'span_days': (max(timestamps) - min(timestamps)).days
+    }
+    
+    # Listening time analysis (ms_played)
+    ms_played = [entry['ms_played'] for entry in data if entry['ms_played']]
+    results['listening_time'] = {
+        'total_ms': sum(ms_played),
+        'total_minutes': sum(ms_played) / 60000,
+        'total_hours': sum(ms_played) / 3600000,
+        'total_days': sum(ms_played) / 86400000,
+        'average_ms_per_play': statistics.mean(ms_played) if ms_played else 0,
+        'median_ms_per_play': statistics.median(ms_played) if ms_played else 0,
+        'min_ms': min(ms_played) if ms_played else 0,
+        'max_ms': max(ms_played) if ms_played else 0,
+        'stdev_ms': statistics.stdev(ms_played) if len(ms_played) > 1 else 0
+    }
+    
+    # Track analysis
+    tracks = [entry['master_metadata_track_name'] for entry in data if entry['master_metadata_track_name']]
+    track_counter = Counter(tracks)
+    results['tracks'] = {
+        'unique_tracks': len(track_counter),
+        'total_plays': len(tracks),
+        'top_20_tracks': track_counter.most_common(20),
+        'average_plays_per_track': len(tracks) / len(track_counter) if track_counter else 0
+    }
+    
+    # Artist analysis
+    artists = [entry['master_metadata_album_artist_name'] for entry in data if entry['master_metadata_album_artist_name']]
+    artist_counter = Counter(artists)
+    results['artists'] = {
+        'unique_artists': len(artist_counter),
+        'total_plays': len(artists),
+        'top_20_artists': artist_counter.most_common(20),
+        'average_plays_per_artist': len(artists) / len(artist_counter) if artist_counter else 0
+    }
+    
+    # Album analysis
+    albums = [entry['master_metadata_album_album_name'] for entry in data if entry['master_metadata_album_album_name']]
+    album_counter = Counter(albums)
+    results['albums'] = {
+        'unique_albums': len(album_counter),
+        'total_plays': len(albums),
+        'top_20_albums': album_counter.most_common(20),
+        'average_plays_per_album': len(albums) / len(album_counter) if album_counter else 0
+    }
+    
+    # Platform analysis
+    platforms = [entry['platform'] for entry in data if entry['platform']]
+    platform_counter = Counter(platforms)
+    results['platforms'] = {
+        'unique_platforms': len(platform_counter),
+        'distribution': dict(platform_counter)
+    }
+    
+    # Country analysis
+    countries = [entry['conn_country'] for entry in data if entry['conn_country']]
+    country_counter = Counter(countries)
+    results['countries'] = {
+        'unique_countries': len(country_counter),
+        'distribution': dict(country_counter),
+        'top_countries': country_counter.most_common(10)
+    }
+    
+    # Reason start/end analysis
+    reason_start = [entry['reason_start'] for entry in data if entry['reason_start']]
+    reason_end = [entry['reason_end'] for entry in data if entry['reason_end']]
+    results['playback_reasons'] = {
+        'reason_start': dict(Counter(reason_start)),
+        'reason_end': dict(Counter(reason_end)),
+        'top_start_reasons': Counter(reason_start).most_common(5),
+        'top_end_reasons': Counter(reason_end).most_common(5)
+    }
+    
+    # Boolean flags analysis
+    results['flags'] = {
+        'shuffle_enabled': sum(1 for e in data if e.get('shuffle')),
+        'shuffle_disabled': sum(1 for e in data if not e.get('shuffle')),
+        'skipped': sum(1 for e in data if e.get('skipped')),
+        'not_skipped': sum(1 for e in data if not e.get('skipped')),
+        'offline': sum(1 for e in data if e.get('offline')),
+        'online': sum(1 for e in data if not e.get('offline')),
+        'incognito': sum(1 for e in data if e.get('incognito_mode')),
+        'not_incognito': sum(1 for e in data if not e.get('incognito_mode'))
+    }
+    
+    # Skip rate
+    total_with_skip_info = len([e for e in data if 'skipped' in e])
+    results['skip_rate'] = {
+        'percentage': (results['flags']['skipped'] / total_with_skip_info * 100) if total_with_skip_info > 0 else 0,
+        'total_skipped': results['flags']['skipped'],
+        'total_not_skipped': results['flags']['not_skipped']
+    }
+    
+    # Episode/Podcast analysis
+    episodes = [entry['episode_name'] for entry in data if entry.get('episode_name')]
+    shows = [entry['episode_show_name'] for entry in data if entry.get('episode_show_name')]
+    results['podcasts'] = {
+        'total_podcast_plays': len(episodes),
+        'unique_episodes': len(set(episodes)),
+        'unique_shows': len(set(shows)),
+        'podcast_percentage': (len(episodes) / len(data) * 100) if len(data) > 0 else 0,
+        'top_shows': Counter(shows).most_common(10) if shows else []
+    }
+    
+    # Audiobook analysis
+    audiobooks = [entry['audiobook_title'] for entry in data if entry.get('audiobook_title')]
+    results['audiobooks'] = {
+        'total_audiobook_plays': len(audiobooks),
+        'unique_audiobooks': len(set(audiobooks)),
+        'audiobook_percentage': (len(audiobooks) / len(data) * 100) if len(data) > 0 else 0,
+        'top_audiobooks': Counter(audiobooks).most_common(10) if audiobooks else []
+    }
+    
+    # Time-of-day analysis
+    hours = [datetime.fromisoformat(e['ts'].replace('Z', '+00:00')).hour for e in data]
+    hour_counter = Counter(hours)
+    results['time_patterns'] = {
+        'by_hour': dict(sorted(hour_counter.items())),
+        'most_active_hour': hour_counter.most_common(1)[0] if hours else None,
+        'least_active_hour': hour_counter.most_common()[-1] if hours else None,
+        'morning_plays': sum(count for hour, count in hour_counter.items() if 6 <= hour < 12),
+        'afternoon_plays': sum(count for hour, count in hour_counter.items() if 12 <= hour < 18),
+        'evening_plays': sum(count for hour, count in hour_counter.items() if 18 <= hour < 24),
+        'night_plays': sum(count for hour, count in hour_counter.items() if 0 <= hour < 6)
+    }
+    
+    # Day-of-week analysis
+    days = [datetime.fromisoformat(e['ts'].replace('Z', '+00:00')).strftime('%A') for e in data]
+    day_counter = Counter(days)
+    results['day_patterns'] = {
+        'by_day': dict(day_counter),
+        'most_active_day': day_counter.most_common(1)[0] if days else None,
+        'least_active_day': day_counter.most_common()[-1] if days else None,
+        'weekday_plays': sum(count for day, count in day_counter.items() if day not in ['Saturday', 'Sunday']),
+        'weekend_plays': sum(count for day, count in day_counter.items() if day in ['Saturday', 'Sunday'])
+    }
+    
+    # Monthly analysis
+    months = [datetime.fromisoformat(e['ts'].replace('Z', '+00:00')).strftime('%Y-%m') for e in data]
+    month_counter = Counter(months)
+    results['monthly_patterns'] = {
+        'by_month': dict(sorted(month_counter.items())),
+        'most_active_month': month_counter.most_common(1)[0] if months else None,
+        'least_active_month': month_counter.most_common()[-1] if months else None,
+        'average_plays_per_month': statistics.mean(month_counter.values()) if month_counter else 0
+    }
+    
+    # Yearly analysis
+    years = [datetime.fromisoformat(e['ts'].replace('Z', '+00:00')).year for e in data]
+    year_counter = Counter(years)
+    results['yearly_patterns'] = {
+        'by_year': dict(sorted(year_counter.items())),
+        'most_active_year': year_counter.most_common(1)[0] if years else None
+    }
+    
+    # Advanced: Artist listening time
+    artist_time = defaultdict(int)
+    for entry in data:
+        if entry.get('master_metadata_album_artist_name') and entry.get('ms_played'):
+            artist_time[entry['master_metadata_album_artist_name']] += entry['ms_played']
+    
+    top_artists_by_time = sorted(artist_time.items(), key=lambda x: x[1], reverse=True)[:20]
+    results['top_artists_by_time'] = [
+        (artist, ms / 3600000) for artist, ms in top_artists_by_time  # Convert to hours
+    ]
+    
+    # Advanced: Track listening time
+    track_time = defaultdict(int)
+    for entry in data:
+        if entry.get('master_metadata_track_name') and entry.get('ms_played'):
+            track_time[entry['master_metadata_track_name']] += entry['ms_played']
+    
+    top_tracks_by_time = sorted(track_time.items(), key=lambda x: x[1], reverse=True)[:20]
+    results['top_tracks_by_time'] = [
+        (track, ms / 3600000) for track, ms in top_tracks_by_time  # Convert to hours
+    ]
+    
+    # Advanced: Album listening time
+    album_time = defaultdict(int)
+    for entry in data:
+        if entry.get('master_metadata_album_album_name') and entry.get('ms_played'):
+            album_time[entry['master_metadata_album_album_name']] += entry['ms_played']
+    
+    top_albums_by_time = sorted(album_time.items(), key=lambda x: x[1], reverse=True)[:20]
+    results['top_albums_by_time'] = [
+        (album, ms / 3600000) for album, ms in top_albums_by_time
+    ]
+    
+    # Listening streaks (consecutive days)
+    dates = sorted(set(datetime.fromisoformat(e['ts'].replace('Z', '+00:00')).date() for e in data))
+    streaks = []
+    current_streak = 1
+    for i in range(1, len(dates)):
+        if (dates[i] - dates[i-1]).days == 1:
+            current_streak += 1
+        else:
+            streaks.append(current_streak)
+            current_streak = 1
+    streaks.append(current_streak)
+    
+    results['listening_streaks'] = {
+        'longest_streak_days': max(streaks) if streaks else 0,
+        'average_streak_days': statistics.mean(streaks) if streaks else 0,
+        'total_streaks': len(streaks),
+        'current_streak': streaks[-1] if streaks else 0
+    }
+    
+    # Plays per day analysis
+    daily_plays = Counter([datetime.fromisoformat(e['ts'].replace('Z', '+00:00')).date() for e in data])
+    most_active = max(daily_plays.items(), key=lambda x: x[1]) if daily_plays else (None, 0)
+    
+    results['daily_statistics'] = {
+        'average_plays_per_day': statistics.mean(daily_plays.values()) if daily_plays else 0,
+        'median_plays_per_day': statistics.median(daily_plays.values()) if daily_plays else 0,
+        'max_plays_in_day': max(daily_plays.values()) if daily_plays else 0,
+        'min_plays_in_day': min(daily_plays.values()) if daily_plays else 0,
+        'most_active_date': most_active[0].isoformat() if most_active[0] else None,
+        'most_active_date_plays': most_active[1]
+    }
+    
+    # Track completion rate (tracks played > 30 seconds vs skipped quickly)
+    completed_tracks = sum(1 for e in data if e.get('ms_played', 0) > 30000)
+    results['engagement'] = {
+        'tracks_played_over_30s': completed_tracks,
+        'tracks_played_under_30s': len(data) - completed_tracks,
+        'completion_rate': (completed_tracks / len(data) * 100) if len(data) > 0 else 0
+    }
+    
+    # URI analysis (unique track URIs)
+    track_uris = [e['spotify_track_uri'] for e in data if e.get('spotify_track_uri')]
+    results['uri_statistics'] = {
+        'unique_track_uris': len(set(track_uris)),
+        'total_track_plays': len(track_uris)
+    }
+    
+    # Artist diversity (how many different artists in top plays)
+    top_100_plays = [entry['master_metadata_album_artist_name'] for entry in data[:100] 
+                     if entry.get('master_metadata_album_artist_name')]
+    results['diversity'] = {
+        'unique_artists_in_top_100_plays': len(set(top_100_plays)),
+        'diversity_score': len(set(top_100_plays)) / 100 if top_100_plays else 0
+    }
+    
+    return results
+
+def print_results(results):
+    """Print analysis results in a readable format."""
+    
+    print("\n" + "=" * 80)
+    print("SPOTIFY LISTENING HISTORY ANALYSIS RESULTS")
+    print("=" * 80)
+    
+    print(f"\nBASIC STATISTICS")
+    print(f"Total listening entries: {results['total_entries']:,}")
+    print(f"Date range: {results['date_range']['earliest']} to {results['date_range']['latest']}")
+    print(f"Span: {results['date_range']['span_days']:,} days")
+    
+    print(f"\n⏱LISTENING TIME")
+    print(f"Total listening time: {results['listening_time']['total_hours']:,.2f} hours ({results['listening_time']['total_days']:.2f} days)")
+    print(f"Average play duration: {results['listening_time']['average_ms_per_play']/60000:.2f} minutes")
+    print(f"Median play duration: {results['listening_time']['median_ms_per_play']/60000:.2f} minutes")
+    print(f"Longest play: {results['listening_time']['max_ms']/60000:.2f} minutes")
+    print(f"Shortest play: {results['listening_time']['min_ms']/1000:.2f} seconds")
+    
+    print(f"\nTRACKS")
+    print(f"Unique tracks: {results['tracks']['unique_tracks']:,}")
+    print(f"Total plays: {results['tracks']['total_plays']:,}")
+    print(f"Average plays per track: {results['tracks']['average_plays_per_track']:.2f}")
+    print(f"\nTop 10 Most Played Tracks:")
+    for i, (track, count) in enumerate(results['tracks']['top_20_tracks'][:10], 1):
+        print(f"  {i}. {track}: {count:,} plays")
+    
+    print(f"\nARTISTS")
+    print(f"Unique artists: {results['artists']['unique_artists']:,}")
+    print(f"Total plays: {results['artists']['total_plays']:,}")
+    print(f"Average plays per artist: {results['artists']['average_plays_per_artist']:.2f}")
+    print(f"\nTop 10 Most Played Artists:")
+    for i, (artist, count) in enumerate(results['artists']['top_20_artists'][:10], 1):
+        print(f"  {i}. {artist}: {count:,} plays")
+    
+    print(f"\nALBUMS")
+    print(f"Unique albums: {results['albums']['unique_albums']:,}")
+    print(f"Total plays: {results['albums']['total_plays']:,}")
+    print(f"Average plays per album: {results['albums']['average_plays_per_album']:.2f}")
+    print(f"\nTop 10 Most Played Albums:")
+    for i, (album, count) in enumerate(results['albums']['top_20_albums'][:10], 1):
+        print(f"  {i}. {album}: {count:,} plays")
+    
+    print(f"\nPLATFORMS")
+    for platform, count in results['platforms']['distribution'].items():
+        print(f"  {platform}: {count:,} plays ({count/results['total_entries']*100:.1f}%)")
+    
+    print(f"\nCOUNTRIES")
+    print(f"Listened from {results['countries']['unique_countries']} different countries")
+    print("Top 5 countries:")
+    for country, count in results['countries']['top_countries'][:5]:
+        print(f"  {country}: {count:,} plays ({count/results['total_entries']*100:.1f}%)")
+    
+    print(f"\nPLAYBACK BEHAVIOR")
+    print(f"Shuffle enabled: {results['flags']['shuffle_enabled']:,} ({results['flags']['shuffle_enabled']/results['total_entries']*100:.1f}%)")
+    print(f"Skipped tracks: {results['flags']['skipped']:,} ({results['skip_rate']['percentage']:.1f}%)")
+    print(f"Offline plays: {results['flags']['offline']:,} ({results['flags']['offline']/results['total_entries']*100:.1f}%)")
+    print(f"Incognito mode: {results['flags']['incognito']:,} ({results['flags']['incognito']/results['total_entries']*100:.1f}%)")
+    print(f"Completion rate (>30s): {results['engagement']['completion_rate']:.1f}%")
+    
+    print(f"\nPODCASTS")
+    print(f"Total podcast plays: {results['podcasts']['total_podcast_plays']:,} ({results['podcasts']['podcast_percentage']:.1f}%)")
+    print(f"Unique shows: {results['podcasts']['unique_shows']:,}")
+    if results['podcasts']['top_shows']:
+        print("Top 5 shows:")
+        for show, count in results['podcasts']['top_shows'][:5]:
+            print(f"  {show}: {count:,} episodes")
+    
+    print(f"\nAUDIOBOOKS")
+    print(f"Total audiobook plays: {results['audiobooks']['total_audiobook_plays']:,} ({results['audiobooks']['audiobook_percentage']:.1f}%)")
+    print(f"Unique audiobooks: {results['audiobooks']['unique_audiobooks']:,}")
+    
+    print(f"\nTIME PATTERNS")
+    if results['time_patterns']['most_active_hour']:
+        hour, count = results['time_patterns']['most_active_hour']
+        print(f"Most active hour: {hour}:00 ({count:,} plays)")
+    if results['time_patterns']['least_active_hour']:
+        hour, count = results['time_patterns']['least_active_hour']
+        print(f"Least active hour: {hour}:00 ({count:,} plays)")
+    print(f"Morning (6am-12pm): {results['time_patterns']['morning_plays']:,} plays")
+    print(f"Afternoon (12pm-6pm): {results['time_patterns']['afternoon_plays']:,} plays")
+    print(f"Evening (6pm-12am): {results['time_patterns']['evening_plays']:,} plays")
+    print(f"Night (12am-6am): {results['time_patterns']['night_plays']:,} plays")
+    
+    print(f"\nDAY PATTERNS")
+    if results['day_patterns']['most_active_day']:
+        day, count = results['day_patterns']['most_active_day']
+        print(f"Most active day: {day} ({count:,} plays)")
+    if results['day_patterns']['least_active_day']:
+        day, count = results['day_patterns']['least_active_day']
+        print(f"Least active day: {day} ({count:,} plays)")
+    print(f"Weekday plays: {results['day_patterns']['weekday_plays']:,}")
+    print(f"Weekend plays: {results['day_patterns']['weekend_plays']:,}")
+    
+    print(f"\nMONTHLY PATTERNS")
+    if results['monthly_patterns']['most_active_month']:
+        month, count = results['monthly_patterns']['most_active_month']
+        print(f"Most active month: {month} ({count:,} plays)")
+    print(f"Average plays per month: {results['monthly_patterns']['average_plays_per_month']:.0f}")
+    
+    print(f"\nYEARLY PATTERNS")
+    print("Plays by year:")
+    for year, count in sorted(results['yearly_patterns']['by_year'].items()):
+        print(f"  {year}: {count:,} plays")
+    
+    print(f"\nLISTENING STREAKS")
+    print(f"Longest streak: {results['listening_streaks']['longest_streak_days']} consecutive days")
+    print(f"Average streak: {results['listening_streaks']['average_streak_days']:.1f} days")
+    print(f"Total streaks: {results['listening_streaks']['total_streaks']}")
+    print(f"Current streak: {results['listening_streaks']['current_streak']} days")
+    
+    print(f"\nDAILY STATISTICS")
+    print(f"Average plays per day: {results['daily_statistics']['average_plays_per_day']:.1f}")
+    print(f"Median plays per day: {results['daily_statistics']['median_plays_per_day']:.0f}")
+    print(f"Most plays in a day: {results['daily_statistics']['max_plays_in_day']:,}")
+    if results['daily_statistics']['most_active_date']:
+        print(f"Most active date: {results['daily_statistics']['most_active_date']} ({results['daily_statistics']['most_active_date_plays']:,} plays)")
+    
+    print(f"\nDIVERSITY SCORE")
+    print(f"Unique artists in top 100 plays: {results['diversity']['unique_artists_in_top_100_plays']}")
+    print(f"Diversity score: {results['diversity']['diversity_score']:.2%}")
+    
+    print(f"\nTOP 10 ARTISTS BY LISTENING TIME")
+    for i, (artist, hours) in enumerate(results['top_artists_by_time'][:10], 1):
+        print(f"  {i}. {artist}: {hours:.2f} hours")
+    
+    print(f"\nTOP 10 TRACKS BY LISTENING TIME")
+    for i, (track, hours) in enumerate(results['top_tracks_by_time'][:10], 1):
+        print(f"  {i}. {track}: {hours:.2f} hours")
+    
+    print(f"\nTOP 10 ALBUMS BY LISTENING TIME")
+    for i, (album, hours) in enumerate(results['top_albums_by_time'][:10], 1):
+        print(f"  {i}. {album}: {hours:.2f} hours")
+    
+    print(f"\nPLAYBACK REASONS")
+    print("Top reasons for starting playback:")
+    for reason, count in results['playback_reasons']['top_start_reasons']:
+        print(f"  {reason}: {count:,} times")
+    print("\nTop reasons for ending playback:")
+    for reason, count in results['playback_reasons']['top_end_reasons']:
+        print(f"  {reason}: {count:,} times")
+    
+    print("\n" + "=" * 80)
+
+def save_results(results, output_filename='spotify_analysis_results.json'):
+    """Save results to JSON file with proper date serialization."""
+    with open(output_filename, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+    print(f"\nFull results saved to: {output_filename}")
+
+if __name__ == "__main__":
+    try:
+        # Interactive file selection
+        filenames = select_files()
+        
+        print("\nLoading data...")
+        data = load_data(filenames)
+        
+        print("Analyzing data... (this may take a moment)")
+        results = analyze_spotify_data(data)
+        
+        print_results(results)
+        save_results(results)
+        
+        print(f"\nAnalysis complete!")
+        
+    except KeyboardInterrupt:
+        print("\n\nAnalysis canceled by user")
+        exit(0)
+    except Exception as e:
+        print(f"\nAn error occurred: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
